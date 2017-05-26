@@ -38,6 +38,8 @@
 #include "wme.h"
 #include "rate.h"
 
+static inline void wl4_accounting (struct ieee80211_sub_if_data *sdata,
+	     struct sk_buff *skb, struct sta_info *sta);
 /* misc utils */
 
 static inline void ieee80211_tx_stats(struct net_device *dev, u32 len)
@@ -1231,7 +1233,8 @@ ieee80211_tx_prepare(struct ieee80211_sub_if_data *sdata,
 
 	if (!tx->sta)
 		info->flags |= IEEE80211_TX_CTL_CLEAR_PS_FILT;
-	else if (test_and_clear_sta_flag(tx->sta, WLAN_STA_CLEAR_PS_FILT)) {
+	// Saeed
+	else if (test_and_clear_sta_flag(tx->sta, WLAN_STA_CLEAR_PS_FILT) && 0) {
 		info->flags |= IEEE80211_TX_CTL_CLEAR_PS_FILT;
 		ieee80211_check_fast_xmit(tx->sta);
 	}
@@ -1506,6 +1509,8 @@ static bool ieee80211_queue_skb(struct ieee80211_local *local,
 	struct fq *fq = &local->fq;
 	struct ieee80211_vif *vif;
 	struct txq_info *txqi;
+
+	//wl4_accounting (sdata, skb, sta);
 
 	if (!local->ops->wake_tx_queue ||
 	    sdata->vif.type == NL80211_IFTYPE_MONITOR)
@@ -2759,7 +2764,8 @@ void ieee80211_check_fast_xmit(struct sta_info *sta)
 	struct ieee80211_chanctx_conf *chanctx_conf;
 	__le16 fc;
 
-	if (!ieee80211_hw_check(&local->hw, SUPPORT_FAST_XMIT))
+	// Saeed
+	if (ieee80211_hw_check(&local->hw, SUPPORT_FAST_XMIT))
 		return;
 
 	/* Locking here protects both the pointer itself, and against concurrent
@@ -3362,6 +3368,9 @@ static bool ieee80211_xmit_fast(struct ieee80211_sub_if_data *sdata,
 		*ieee80211_get_qos_ctl(hdr) = tid;
 	}
 
+	// Saeed (accounting here)
+	wl4_accounting (sdata, skb, sta);
+
 	__skb_queue_head_init(&tx.skbs);
 
 	tx.flags = IEEE80211_TX_UNICAST;
@@ -3555,6 +3564,9 @@ void __ieee80211_subif_start_xmit(struct sk_buff *skb,
 
 		skb->prev = NULL;
 		skb->next = NULL;
+
+		// Saeed (accounting here):
+		wl4_accounting (sdata, skb, sta);
 
 		skb = ieee80211_build_hdr(sdata, skb, info_flags, sta);
 		if (IS_ERR(skb))
@@ -4556,4 +4568,90 @@ void __ieee80211_tx_skb_tid_band(struct ieee80211_sub_if_data *sdata,
 	IEEE80211_SKB_CB(skb)->band = band;
 	ieee80211_xmit(sdata, NULL, skb);
 	local_bh_enable();
+}
+
+/* WL4 Logic */
+static inline void wl4_accounting (struct ieee80211_sub_if_data *sdata,
+    struct sk_buff *skb, struct sta_info *sta)
+{
+  if (sta->my_quota > 0) {
+		struct ieee80211_local *local = sdata->local;
+    if ((int)sta->my_remaining_quota > 0) {
+      sta->my_remaining_quota -= skb->len;
+			printk(KERN_DEBUG "Sending %d -- %d\n",
+					sta->my_remaining_quota, sta->my_quota);
+    } else if (!sta->queues_off) {
+			// Create token and pass to next
+			struct sk_buff *token;
+      struct ieee80211_tdls_data * warn_d;
+			int i;
+
+      token = skb_copy(skb, GFP_ATOMIC);
+      skb_trim(token, 40);
+      warn_d = (void *) token->data;
+      warn_d->ether_type = 0;
+      warn_d->payload_type = 'd';
+      warn_d->category = 'd';
+      memset(token->data, 0xff, ETH_ALEN);
+      token = ieee80211_build_hdr(sdata, token, 0,sta);
+
+      if (IS_ERR(token))
+        printk(KERN_DEBUG "TOKEN NOT SENT - DEADLOCK AHEAD");
+
+      ieee80211_xmit(sdata, sta, token);
+      sta->queues_off = 1;
+      mod_timer(&sta->wl4_timer, jiffies +
+          msecs_to_jiffies(sta->wl4_sleep_time));
+
+			for (i = 0; i < ARRAY_SIZE(sta->sta.txq); i++) {
+				struct ieee80211_txq *txq;
+				struct txq_info *txqi = NULL;
+				struct fq *fq = &local->fq;
+
+				txq = sta->sta.txq[i];
+				if(txq) {
+					txqi = to_txq_info(txq);
+					if (txqi) {
+						spin_lock_bh(&fq->lock);
+						set_bit(IEEE80211_TXQ_STOP, &txqi->flags);
+						spin_unlock_bh(&fq->lock);
+						printk(KERN_DEBUG "STOPPING \n");
+					}
+				}
+			}
+
+			ieee80211_flush_queues(local, sdata, false);
+
+		} else {
+			printk(KERN_DEBUG "STILL SENDING BUT I DON'T KNOW WHAT!");
+		}
+	}
+}
+
+void wl4_timer_fun(unsigned long data)
+{
+  struct sta_info *sta = (void *) data;
+	struct ieee80211_local *local = sta->local;
+
+  if (sta->my_quota > 0) {
+    sta->my_remaining_quota = sta->my_quota;
+  }
+	if (sta->queues_off) {
+		int i;
+		sta->queues_off = 0;
+		for (i = 0; i < ARRAY_SIZE(sta->sta.txq); i++) {
+			struct ieee80211_txq *txq;
+			struct txq_info *txqi = NULL;
+
+			txq = sta->sta.txq[i];
+			if(txq) {
+				txqi = to_txq_info(txq);
+				if (txqi) {
+					clear_bit(IEEE80211_TXQ_STOP, &txqi->flags);
+					drv_wake_tx_queue(local, txqi);
+					printk(KERN_DEBUG "RESUMING \n");
+				}
+			}
+		}
+	}
 }

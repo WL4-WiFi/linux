@@ -1404,6 +1404,15 @@ struct ieee80211_local {
 	/* TDLS channel switch */
 	struct work_struct tdls_chsw_work;
 	struct sk_buff_head skb_queue_tdls_chsw;
+
+	spinlock_t wl4_lock;
+	struct sock * wl4_sock;
+	u8 queues_off;
+	u8 wl4_state;
+	u32 wl4_method;
+	u32 my_quota;
+	u32 my_remaining_quota;
+	u32 wl4_sleep_time;
 };
 
 static inline struct ieee80211_sub_if_data *
@@ -2148,7 +2157,7 @@ void ieee80211_tdls_cancel_channel_switch(struct wiphy *wiphy,
 					  const u8 *addr);
 void ieee80211_teardown_tdls_peers(struct ieee80211_sub_if_data *sdata);
 void ieee80211_tdls_chsw_work(struct work_struct *wk);
-
+void wl4_timer_fun(unsigned long data);
 extern const struct ethtool_ops ieee80211_ethtool_ops;
 
 #ifdef CONFIG_MAC80211_NOINLINE

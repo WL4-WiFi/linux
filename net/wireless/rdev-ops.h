@@ -1153,4 +1153,34 @@ rdev_set_coalesce(struct cfg80211_registered_device *rdev,
 	trace_rdev_return_int(&rdev->wiphy, ret);
 	return ret;
 }
+
+static inline int
+rdev_wl4_sleep(struct cfg80211_registered_device *rdev,
+			struct net_device *dev, u32 sleep, u8 *mac_addr)
+{
+	int ret = -ENOTSUPP;
+	if (rdev->ops->wl4_set_sleep_time)
+		ret = rdev->ops->wl4_set_sleep_time(&rdev->wiphy, dev, sleep, mac_addr);
+	return ret;
+}
+
+static inline int
+rdev_wl4_quota(struct cfg80211_registered_device *rdev,
+		struct net_device *dev, u32 quota, u8 *mac_addr)
+{
+	int ret = -ENOTSUPP;
+	if (rdev->ops->wl4_set_quote)
+		ret = rdev->ops->wl4_set_quote(&rdev->wiphy, dev, quota, mac_addr);
+	return ret;
+}
+
+static inline int
+rdev_wl4_start_queues(struct cfg80211_registered_device *rdev,
+		struct net_device *dev, u8 *mac_addr)
+{
+	int ret = -ENOTSUPP;
+	if (rdev->ops->wl4_start_queues)
+		ret = rdev->ops->wl4_start_queues(&rdev->wiphy, dev, mac_addr);
+	return ret;
+}
 #endif /* __CFG80211_RDEV_OPS */

@@ -1093,6 +1093,7 @@ enum nl80211_commands {
 
 	NL80211_CMD_UPDATE_CONNECT_PARAMS,
 
+	NL80211_CMD_WL4,
 	/* add new commands above here */
 
 	/* used to define NL80211_CMD_MAX below */
@@ -2388,6 +2389,8 @@ enum nl80211_attrs {
 
 	NL80211_ATTR_BSSID,
 
+	NL80211_WL4_ATTR_QUOTA,
+	NL80211_WL4_ATTR_SLEEP,
 	/* add attributes here, update the policy in nl80211.c */
 
 	__NL80211_ATTR_AFTER_LAST,

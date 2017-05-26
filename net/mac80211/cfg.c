@@ -2208,6 +2208,74 @@ ieee80211_sched_scan_stop(struct wiphy *wiphy, struct net_device *dev)
 	return ieee80211_request_sched_scan_stop(local);
 }
 
+static int _wl4_set_quote(struct wiphy *wiphy, struct net_device *dev,
+				u32 wl4_quote, u8 *mac_addr)
+{
+	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
+	struct sta_info *sta = sta_info_get_bss(sdata, mac_addr);
+
+	if(!sta) {
+		printk(KERN_DEBUG "FAILED TO SET QUOTA\n");
+		return -1;
+	}
+
+	sta->my_remaining_quota = wl4_quote;
+	sta->my_quota = wl4_quote;
+	printk(KERN_DEBUG "SET QUOTA\n");
+	return 0;
+}
+
+static int _wl4_set_sleep_time(struct wiphy *wiphy, struct net_device *dev,
+				u32 wl4_sleep_time, u8 *mac_addr)
+{
+	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
+	struct sta_info *sta = sta_info_get_bss(sdata, mac_addr);
+
+	if(!sta) {
+		printk(KERN_DEBUG "FAILED TO SET SLEEP\n");
+		return -1;
+	}
+
+	printk(KERN_DEBUG "SET SLEEP\n");
+	sta->wl4_sleep_time = wl4_sleep_time;
+	return 0;
+}
+
+static int _wl4_start_queues(struct wiphy *wiphy, struct net_device *dev,
+		u8 *macaddr)
+{
+	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
+	struct ieee80211_local *local = sdata->local;
+	struct sta_info *sta = NULL;
+	int i;
+
+	sta = sta_info_get_bss(sdata, macaddr);
+
+	printk("RESUMING QUEUES BUT SOMETHING ELSE IS WRONG\n");
+
+	if (sta) {
+		sta->queues_off = 0;
+		sta->my_remaining_quota = sta->my_quota;
+		del_timer(&sta->wl4_timer);
+
+		for (i = 0; i < ARRAY_SIZE(sta->sta.txq); i++) {
+			struct ieee80211_txq *txq;
+			struct txq_info *txqi = NULL;
+
+			txq = sta->sta.txq[i];
+			if(txq) {
+				txqi = to_txq_info(txq);
+				if (txqi) {
+					clear_bit(IEEE80211_TXQ_STOP, &txqi->flags);
+					drv_wake_tx_queue(local, txqi);
+					printk(KERN_DEBUG "RESUMING \n");
+				}
+			}
+		}
+	}
+	return 0;
+}
+
 static int ieee80211_auth(struct wiphy *wiphy, struct net_device *dev,
 			  struct cfg80211_auth_request *req)
 {
@@ -3653,4 +3721,7 @@ const struct cfg80211_ops mac80211_config_ops = {
 	.nan_change_conf = ieee80211_nan_change_conf,
 	.add_nan_func = ieee80211_add_nan_func,
 	.del_nan_func = ieee80211_del_nan_func,
+	.wl4_set_quote = _wl4_set_quote,
+	.wl4_set_sleep_time = _wl4_set_sleep_time,
+	.wl4_start_queues = _wl4_start_queues,
 };

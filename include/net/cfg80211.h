@@ -3048,6 +3048,18 @@ struct cfg80211_ops {
 	int	(*set_multicast_to_unicast)(struct wiphy *wiphy,
 					    struct net_device *dev,
 					    const bool enabled);
+
+	int (*wl4_set_quote)(struct wiphy *wiphy,
+							struct net_device *dev,
+							u32 wl4_quote,
+							u8 *mac_addr);
+	int (*wl4_set_sleep_time)(struct wiphy *wiphy,
+							struct net_device *dev,
+							u32 wl4_sleep_time,
+							u8 *mac_addr);
+	int (*wl4_start_queues)(struct wiphy *wiphy,
+							struct net_device *dev,
+							u8 *macaddr);
 };
 
 /*

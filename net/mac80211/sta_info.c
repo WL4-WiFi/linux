@@ -344,6 +344,11 @@ struct sta_info *sta_info_alloc(struct ieee80211_sub_if_data *sdata,
 	sta->local = local;
 	sta->sdata = sdata;
 	sta->rx_stats.last_rx = jiffies;
+	sta->my_quota = 0;
+	sta->my_remaining_quota = 0;
+	sta->wl4_sleep_time = 1;
+	sta->queues_off = 0;
+	setup_timer(&sta->wl4_timer, wl4_timer_fun, (unsigned long) sta);
 
 	u64_stats_init(&sta->rx_stats.syncp);
 

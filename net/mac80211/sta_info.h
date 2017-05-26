@@ -467,6 +467,12 @@ struct sta_info {
 	spinlock_t rate_ctrl_lock;
 	spinlock_t lock;
 
+	struct timer_list wl4_timer;
+	u8 queues_off;
+	u32 my_quota;
+	u32 my_remaining_quota;
+	u32 wl4_sleep_time;
+
 	struct ieee80211_fast_tx __rcu *fast_tx;
 	struct ieee80211_fast_rx __rcu *fast_rx;
 	struct ieee80211_sta_rx_stats __percpu *pcpu_rx_stats;

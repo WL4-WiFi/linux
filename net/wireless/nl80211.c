@@ -405,6 +405,8 @@ static const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
 	[NL80211_ATTR_FILS_NONCES] = { .len = 2 * FILS_NONCE_LEN },
 	[NL80211_ATTR_MULTICAST_TO_UNICAST_ENABLED] = { .type = NLA_FLAG, },
 	[NL80211_ATTR_BSSID] = { .len = ETH_ALEN },
+	[NL80211_WL4_ATTR_QUOTA] = {.type = NLA_U32},
+	[NL80211_WL4_ATTR_SLEEP] = {.type = NLA_U32},
 };
 
 /* policy for the key attributes */
@@ -8988,6 +8990,7 @@ static int nl80211_tdls_oper(struct sk_buff *skb, struct genl_info *info)
 	    !rdev->ops->tdls_oper)
 		return -EOPNOTSUPP;
 
+
 	if (!info->attrs[NL80211_ATTR_TDLS_OPERATION] ||
 	    !info->attrs[NL80211_ATTR_MAC])
 		return -EINVAL;
@@ -11942,6 +11945,41 @@ static void nl80211_post_doit(const struct genl_ops *ops, struct sk_buff *skb,
 	}
 }
 
+static int nl80211_wl4(struct sk_buff *skb, struct genl_info *info)
+{
+	struct cfg80211_registered_device *rdev = info->user_ptr[0];
+	struct net_device *dev = info->user_ptr[1];
+	u32 sleep, quota;
+	u8 *mac_addr;
+
+	if (info->attrs[NL80211_WL4_ATTR_SLEEP])
+		printk(KERN_DEBUG "WL4 SLEEP %d \n",
+				nla_get_u32(info->attrs[NL80211_WL4_ATTR_SLEEP]));
+
+	if (info->attrs[NL80211_WL4_ATTR_QUOTA])
+		printk(KERN_DEBUG "WL4 QUOTA %d\n",
+				nla_get_u32(info->attrs[NL80211_WL4_ATTR_QUOTA]));
+
+	if (!(rdev->wiphy.flags & WIPHY_FLAG_SUPPORTS_TDLS) ||
+			!rdev->ops->tdls_oper)
+		return -EOPNOTSUPP;
+
+	if (!info->attrs[NL80211_ATTR_MAC])
+		return -EINVAL;
+
+	mac_addr = nla_data(info->attrs[NL80211_ATTR_MAC]);
+
+	if (info->attrs[NL80211_WL4_ATTR_SLEEP]) {
+		sleep = nla_get_u32(info->attrs[NL80211_WL4_ATTR_SLEEP]);
+		return rdev_wl4_sleep(rdev, dev, sleep, mac_addr);
+	} else if (info->attrs[NL80211_WL4_ATTR_QUOTA]) {
+		quota = nla_get_u32(info->attrs[NL80211_WL4_ATTR_QUOTA]);
+		return rdev_wl4_quota(rdev, dev, quota, mac_addr);
+	} else {
+		return rdev_wl4_start_queues(rdev, dev, mac_addr);
+	}
+}
+
 static const struct genl_ops nl80211_ops[] = {
 	{
 		.cmd = NL80211_CMD_GET_WIPHY,
@@ -12714,6 +12752,15 @@ static const struct genl_ops nl80211_ops[] = {
 		.internal_flags = NL80211_FLAG_NEED_NETDEV |
 				  NL80211_FLAG_NEED_RTNL,
 	},
+	{
+		.cmd = NL80211_CMD_WL4,
+		.doit = nl80211_wl4,
+		.policy = nl80211_policy,
+		.flags = GENL_UNS_ADMIN_PERM,
+		.internal_flags = NL80211_FLAG_NEED_NETDEV_UP |
+			NL80211_FLAG_NEED_RTNL,
+	},
+
 };
 
 static struct genl_family nl80211_fam __ro_after_init = {
