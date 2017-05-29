@@ -1234,7 +1234,7 @@ ieee80211_tx_prepare(struct ieee80211_sub_if_data *sdata,
 	if (!tx->sta)
 		info->flags |= IEEE80211_TX_CTL_CLEAR_PS_FILT;
 	// Saeed
-	else if (test_and_clear_sta_flag(tx->sta, WLAN_STA_CLEAR_PS_FILT) && 0) {
+	else if (test_and_clear_sta_flag(tx->sta, WLAN_STA_CLEAR_PS_FILT)) {
 		info->flags |= IEEE80211_TX_CTL_CLEAR_PS_FILT;
 		ieee80211_check_fast_xmit(tx->sta);
 	}
@@ -1509,8 +1509,6 @@ static bool ieee80211_queue_skb(struct ieee80211_local *local,
 	struct fq *fq = &local->fq;
 	struct ieee80211_vif *vif;
 	struct txq_info *txqi;
-
-	//wl4_accounting (sdata, skb, sta);
 
 	if (!local->ops->wake_tx_queue ||
 	    sdata->vif.type == NL80211_IFTYPE_MONITOR)
@@ -2765,7 +2763,7 @@ void ieee80211_check_fast_xmit(struct sta_info *sta)
 	__le16 fc;
 
 	// Saeed
-	if (ieee80211_hw_check(&local->hw, SUPPORT_FAST_XMIT))
+	if (!ieee80211_hw_check(&local->hw, SUPPORT_FAST_XMIT))
 		return;
 
 	/* Locking here protects both the pointer itself, and against concurrent
@@ -3332,6 +3330,9 @@ static bool ieee80211_xmit_fast(struct ieee80211_sub_if_data *sdata,
 			return true;
 	}
 
+	// Saeed (accounting here)
+	wl4_accounting (sdata, skb, sta);
+
 	if ((hdr->frame_control & cpu_to_le16(IEEE80211_STYPE_QOS_DATA)) &&
 	    ieee80211_amsdu_aggregate(sdata, sta, fast_tx, skb))
 		return true;
@@ -3367,9 +3368,6 @@ static bool ieee80211_xmit_fast(struct ieee80211_sub_if_data *sdata,
 		tid = skb->priority & IEEE80211_QOS_CTL_TAG1D_MASK;
 		*ieee80211_get_qos_ctl(hdr) = tid;
 	}
-
-	// Saeed (accounting here)
-	wl4_accounting (sdata, skb, sta);
 
 	__skb_queue_head_init(&tx.skbs);
 
@@ -4572,33 +4570,40 @@ void __ieee80211_tx_skb_tid_band(struct ieee80211_sub_if_data *sdata,
 
 /* WL4 Logic */
 static inline void wl4_accounting (struct ieee80211_sub_if_data *sdata,
-    struct sk_buff *skb, struct sta_info *sta)
+		struct sk_buff *skb, struct sta_info *sta)
 {
-  if (sta->my_quota > 0) {
+	if (sta->my_quota > 0) {
 		struct ieee80211_local *local = sdata->local;
-    if ((int)sta->my_remaining_quota > 0) {
-      sta->my_remaining_quota -= skb->len;
+		if ((int)sta->my_remaining_quota > 0) {
+			sta->my_remaining_quota -= skb->len;
 			printk(KERN_DEBUG "Sending %d -- %d\n",
 					sta->my_remaining_quota, sta->my_quota);
-    } else if (!sta->queues_off) {
+		} else if (!sta->queues_off) {
 			// Create token and pass to next
-			struct sk_buff *token;
-      struct ieee80211_tdls_data * warn_d;
 			int i;
+			struct sk_buff *token;
+			struct sta_info *sta_ap;
+			struct ieee80211_tdls_data * warn_d;
 
-      token = skb_copy(skb, GFP_ATOMIC);
-      skb_trim(token, 40);
-      warn_d = (void *) token->data;
-      warn_d->ether_type = 0;
-      warn_d->payload_type = 'd';
-      warn_d->category = 'd';
-      memset(token->data, 0xff, ETH_ALEN);
-      token = ieee80211_build_hdr(sdata, token, 0,sta);
+			if (!test_sta_flag(sta, WLAN_STA_TDLS_PEER)) {
+				sta_ap = sta;
+			} else {
+				sta_ap = sta_info_get_bss(sdata, sdata->u.mgd.bssid);
+			}
 
-      if (IS_ERR(token))
-        printk(KERN_DEBUG "TOKEN NOT SENT - DEADLOCK AHEAD");
+			token = skb_copy(skb, GFP_ATOMIC);
 
-      ieee80211_xmit(sdata, sta, token);
+			skb_trim(token, 100);
+			warn_d = (void *) token->data;
+			warn_d->ether_type = 0;
+			warn_d->payload_type = 'd';
+			warn_d->category = 'd';
+			memset(token->data, 0xff, ETH_ALEN);
+
+			token = ieee80211_build_hdr(sdata, token, 0, sta_ap);
+
+			ieee80211_tx_skb(sdata, token);
+
       sta->queues_off = 1;
       mod_timer(&sta->wl4_timer, jiffies +
           msecs_to_jiffies(sta->wl4_sleep_time));
@@ -4608,7 +4613,11 @@ static inline void wl4_accounting (struct ieee80211_sub_if_data *sdata,
 				struct txq_info *txqi = NULL;
 				struct fq *fq = &local->fq;
 
+				if(i==7)
+					continue;
+
 				txq = sta->sta.txq[i];
+
 				if(txq) {
 					txqi = to_txq_info(txq);
 					if (txqi) {
@@ -4619,8 +4628,6 @@ static inline void wl4_accounting (struct ieee80211_sub_if_data *sdata,
 					}
 				}
 			}
-
-			ieee80211_flush_queues(local, sdata, false);
 
 		} else {
 			printk(KERN_DEBUG "STILL SENDING BUT I DON'T KNOW WHAT!");
@@ -4643,7 +4650,11 @@ void wl4_timer_fun(unsigned long data)
 			struct ieee80211_txq *txq;
 			struct txq_info *txqi = NULL;
 
+			if(i == 7)
+				continue;
+
 			txq = sta->sta.txq[i];
+
 			if(txq) {
 				txqi = to_txq_info(txq);
 				if (txqi) {
