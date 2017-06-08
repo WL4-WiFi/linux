@@ -28,6 +28,11 @@
 #include <net/codel_impl.h>
 #include <asm/unaligned.h>
 #include <net/fq_impl.h>
+#include <linux/net.h>
+#include <linux/tcp.h>
+#include <net/sock.h>
+#include <net/inet_hashtables.h>
+#include <net/tcp.h>
 
 #include "ieee80211_i.h"
 #include "driver-ops.h"
@@ -4569,21 +4574,97 @@ void __ieee80211_tx_skb_tid_band(struct ieee80211_sub_if_data *sdata,
 }
 
 /* WL4 Logic */
+static inline int wl4_check_tcp_queues(struct sk_buff *skb)
+{
+	if(skb->transport_header) {
+		 u16 len_rthdr;
+		 skb_set_transport_header(skb, len_rthdr);
+		 if (skb->len < len_rthdr + 2)
+			 return 1;
+		 else {
+			 if (skb->sk) {
+				 if(skb->sk->sk_family == AF_INET){
+					 const struct tcp_sock *tp = tcp_sk(skb->sk);
+					 const struct inet_sock *inet = inet_sk(skb->sk);
+					 if(inet->inet_daddr) {
+						 if (tp->write_seq - tp->snd_nxt >= skb->len) {
+							 printk(KERN_DEBUG "%d %08X\n", tp->write_seq - tp->snd_nxt,
+									 inet->inet_daddr);
+							 return 1;
+						 } else {
+							 int i =0;
+							 for (; i <= tcp_hashinfo.ehash_mask; ++i) {
+								 struct sock *sk;
+								 struct hlist_nulls_node *node;
+								 spinlock_t *lock = inet_ehash_lockp(&tcp_hashinfo, i);
+
+								 if(hlist_nulls_empty(&tcp_hashinfo.ehash[i].chain))
+									 continue;
+
+								 spin_lock_bh(lock);
+								 sk_nulls_for_each(sk, node, &tcp_hashinfo.ehash[i].chain) {
+									 if (sk->sk_family == AF_INET) {
+										 const struct tcp_sock *tp_tmp = tcp_sk(sk);
+										 const struct inet_sock *inet_tmp = inet_sk(sk);
+										 if(inet->inet_daddr == inet_tmp->inet_daddr) {
+											 if (tp->write_seq - tp->snd_nxt >= skb->len) {
+												 printk(KERN_DEBUG "%d  %08X\n", tp_tmp->write_seq -
+														 tp_tmp->snd_nxt, inet->inet_daddr);
+												 spin_unlock_bh(lock);
+												 return 1;
+											 }
+										 }
+									 }
+								 }
+								 spin_unlock_bh(lock);
+							 }
+							 return 0;
+						 }
+					 }
+				 }
+			 }
+			 return 1;
+		 }
+	}
+	return 1;
+}
+
+static inline void wl4_token_generation(struct ieee80211_sub_if_data *sdata,
+		struct sk_buff *skb, struct sta_info *sta,
+		struct sk_buff *token, struct sta_info *sta_ap)
+{
+	struct ieee80211_tdls_data * warn_d;
+
+	if (!test_sta_flag(sta, WLAN_STA_TDLS_PEER)) {
+		sta_ap = sta;
+	} else {
+		sta_ap = sta_info_get_bss(sdata, sdata->u.mgd.bssid);
+	}
+
+	token = skb_copy(skb, GFP_ATOMIC);
+	skb_trim(token, 100);
+	warn_d = (void *) token->data;
+	warn_d->ether_type = 0;
+	warn_d->payload_type = 'd';
+	warn_d->category = 'd';
+	memset(token->data, 0xff, ETH_ALEN);
+
+	token = ieee80211_build_hdr(sdata, token, 0, sta_ap);
+}
+
 static inline void wl4_accounting (struct ieee80211_sub_if_data *sdata,
 		struct sk_buff *skb, struct sta_info *sta)
 {
 	if (sta->my_quota > 0) {
+		int queues_full = wl4_check_tcp_queues(skb);
 		struct ieee80211_local *local = sdata->local;
-		if ((int)sta->my_remaining_quota > 0) {
+		if ((int)sta->my_remaining_quota > 0 && queues_full) {
 			sta->my_remaining_quota -= skb->len;
-			printk(KERN_DEBUG "Sending %d -- %d\n",
-					sta->my_remaining_quota, sta->my_quota);
 		} else if (!sta->queues_off) {
-			// Create token and pass to next
-			int i;
 			struct sk_buff *token;
 			struct sta_info *sta_ap;
 			struct ieee80211_tdls_data * warn_d;
+			int i;
 
 			if (!test_sta_flag(sta, WLAN_STA_TDLS_PEER)) {
 				sta_ap = sta;
@@ -4592,7 +4673,6 @@ static inline void wl4_accounting (struct ieee80211_sub_if_data *sdata,
 			}
 
 			token = skb_copy(skb, GFP_ATOMIC);
-
 			skb_trim(token, 100);
 			warn_d = (void *) token->data;
 			warn_d->ether_type = 0;

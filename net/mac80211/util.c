@@ -347,9 +347,8 @@ static void __ieee80211_stop_queue(struct ieee80211_hw *hw, int queue,
 	else
 		local->q_stop_reasons[queue][reason]++;
 
-	if (__test_and_set_bit(reason, &local->queue_stop_reasons[queue])) {
+	if (__test_and_set_bit(reason, &local->queue_stop_reasons[queue]))
 		return;
-	}
 
 	if (local->ops->wake_tx_queue)
 		return;
@@ -366,9 +365,8 @@ static void __ieee80211_stop_queue(struct ieee80211_hw *hw, int queue,
 
 		for (ac = 0; ac < n_acs; ac++) {
 			if (sdata->vif.hw_queue[ac] == queue ||
-			    sdata->vif.cab_queue == queue) {
+			    sdata->vif.cab_queue == queue)
 				netif_stop_subqueue(sdata->dev, ac);
-			}
 		}
 	}
 	rcu_read_unlock();
